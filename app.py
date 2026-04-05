@@ -4,6 +4,17 @@ import pandas as pd
 from collections import Counter
 
 
+import re
+from rapidfuzz import process
+
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r'[^a-z0-9 ]', '', text)
+    return text
+
+
+
+
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="Anime Recommender", layout="centered")
 
@@ -24,14 +35,40 @@ def load_data():
 
 df = load_data()
 
+
+# run once after loading dataset
+df["clean_name"] = df["Name"].apply(clean_text)
+
+
 # ---------------- SESSION STATE (for history) ----------------
 if "history" not in st.session_state:
     st.session_state.history = []
 
 # ---------------- FUNCTIONS ----------------
+
 def search_anime(name):
-    name = name.strip().lower()
-    return df[df["Name"].str.lower() == name]
+    name_clean = clean_text(name)
+
+    # 1️⃣ Partial match (fast & most useful)
+    result = df[df["clean_name"].str.contains(name_clean)]
+
+    if not result.empty:
+        return result.head(5)
+
+    # 2️⃣ Fuzzy matching (handles typos)
+    choices = df["Name"].tolist()
+    matches = process.extract(name, choices, limit=5)
+
+    if matches:
+        matched_names = [m[0] for m in matches]
+        return df[df["Name"].isin(matched_names)]
+
+    return df.iloc[0:0]
+
+# def search_anime(name):
+#     name = name.strip().lower()
+#     return df[df["Name"].str.lower() == name]
+
 
 def add_to_history(name):
     if name not in st.session_state.history:
@@ -151,7 +188,7 @@ if user_input and (search_clicked or st.session_state.last_search != user_input)
     result = search_anime(user_input)
 
     if result.empty:
-        st.error("❌ Anime not found")
+        st.error("❌ Anime not found. Try a different spelling or keyword.")
     else:
         st.success("✅ Anime Found!")
 
@@ -252,30 +289,29 @@ img:hover {
 
 
 
-#instruction text for user
-st.markdown(
-    """
-    <div style="
-        background-color:#1e1e1e;
-        padding:12px;
-        border-radius:10px;
-        text-align:center;
-        font-size:16px;
-        margin-top:10px;
-        margin-bottom:20px;
-    ">
-        ⬇️ <b>Details will appear at the bottom of the page. Please scroll down.</b>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+# #instruction text for user
+# st.markdown(
+#     """
+#     <div style="
+#         background-color:#1e1e1e;
+#         padding:12px;
+#         border-radius:10px;
+#         text-align:center;
+#         font-size:16px;
+#         margin-top:10px;
+#         margin-bottom:20px;
+#     ">
+#         ⬇️ <b>Details will appear at the bottom of the page. Please scroll down.</b>
+#     </div>
+#     """,
+#     unsafe_allow_html=True
+# )
 
 
-
-#filtered anime section
+# ---------------- Filtered Anime Section ----------------
 st.markdown("## 🎯 Filtered Anime")
 
-# 🚫 If no genre selected → show nothing (or message)
+# If no genre selected → show info
 if not selected_genres:
     st.info("👈 Select one or more genres from the sidebar to see results")
 else:
@@ -288,7 +324,10 @@ else:
             with cols[i % 5]:
                 st.image(anime["image_url"], use_container_width=True)
 
-                if st.button("Details", key=f"filterbtn_{i}"):
+                details_key = f"filterbtn_{i}"
+
+                # When clicked, store selected anime in session
+                if st.button("Details", key=details_key):
                     st.session_state.selected_anime = anime["Name"]
 
                 st.markdown(
@@ -296,7 +335,42 @@ else:
                     unsafe_allow_html=True
                 )
 
+                # Show details right below the clicked anime
+                if "selected_anime" in st.session_state:
+                    if st.session_state.selected_anime == anime["Name"]:
+                        with st.expander(f"Details of {anime['Name']}", expanded=True):
+                            st.image(anime["image_url"], use_container_width=True)
+                            st.write(f"⭐ Rating: {anime['Rating']}")
+                            st.write(f"🎭 Genre: {anime['Genre']}")
+                            st.write(f"📺 Episodes: {anime['Episodes']}")
+                            st.write(f"🏢 Studio: {anime['Studio']}")
+                            st.write(f"📅 Year: {anime['Year']}")
+                            st.write(f"𝐒𝐘𝐍𝐎𝐏𝐒𝐈𝐒 : {anime['Synopsis']}")
 
+
+# #filtered anime section
+# st.markdown("## 🎯 Filtered Anime")
+
+# # 🚫 If no genre selected → show nothing (or message)
+# if not selected_genres:
+#     st.info("👈 Select one or more genres from the sidebar to see results")
+# else:
+#     if filtered_df.empty:
+#         st.warning("No anime found with selected genres 😢")
+#     else:
+#         cols = st.columns(5)
+
+#         for i, (_, anime) in enumerate(filtered_df.head(10).iterrows()):
+#             with cols[i % 5]:
+#                 st.image(anime["image_url"], use_container_width=True)
+
+#                 if st.button("Details", key=f"filterbtn_{i}"):
+#                     st.session_state.selected_anime = anime["Name"]
+
+#                 st.markdown(
+#                     f"<p style='text-align:center'>{anime['Name']}</p>",
+#                     unsafe_allow_html=True
+#                 )
 
 
 # ---------------- MOST POPULAR SECTION ----------------
@@ -319,40 +393,83 @@ for i, (_, anime) in enumerate(top.iterrows()):
     with cols[i % 3]:
         st.image(anime["image_url"], use_container_width=True)
 
-        # Clickable poster button
-        if st.button("Details", key=f"popbtn_{i}"):
+        # Details button
+        details_key = f"popbtn_{i}"
+        if st.button("Details", key=details_key):
             st.session_state.selected_anime = anime["Name"]
 
         st.markdown(
             f"<p style='text-align:center'>{anime['Name']}</p>",
             unsafe_allow_html=True
         )
-# ---------------- GET CLICKED ANIME ----------------
-if "selected_anime" in st.session_state:
 
-    selected_name = st.session_state.selected_anime
+        # Show details right below clicked anime
+        if "selected_anime" in st.session_state:
+            if st.session_state.selected_anime == anime["Name"]:
+                with st.expander(f"Details of {anime['Name']}", expanded=True):
+                    st.image(anime["image_url"], use_container_width=True)
+                    st.write(f"⭐ Rating: {anime['Rating']}")
+                    st.write(f"🎭 Genre: {anime['Genre']}")
+                    st.write(f"📺 Episodes: {anime['Episodes']}")
+                    st.write(f"🏢 Studio: {anime['Studio']}")
+                    st.write(f"📅 Year: {anime['Year']}")
+                    st.write(f"𝐒𝐘𝐍𝐎𝐏𝐒𝐈𝐒 : {anime['Synopsis']}")
 
-    st.markdown("## 🎬 Anime Details")
 
-    selected = search_anime(selected_name)
+# # ---------------- MOST POPULAR SECTION ----------------
+# st.markdown("## 🌟 Most Popular Anime")
 
-    if not selected.empty:
-        row = selected.iloc[0]
+# # Clean data
+# df["Name_clean"] = df["Name"].str.lower().str.strip()
 
-        col1, col2, col3 = st.columns([1, 2, 3])
+# # Ensure Popularity is numeric
+# df["Scoredby"] = pd.to_numeric(df["Scoredby"], errors="coerce")
 
-        with col1:
-                st.image(row["image_url"], use_container_width=True)
+# # Sort (HIGHER = MORE POPULAR ✅)
+# top = df.sort_values(by="Scoredby", ascending=False).head(12)
 
-        with col2:
-                st.write(f"⭐ Rating: {row['Rating']}")
-                st.write(f"🎭 Genre: {row['Genre']}")
-                st.write(f"📺 Episodes: {row['Episodes']}")
-                st.write(f"🏢 Studio: {row['Studio']}")
-                st.write(f"📅 Year: {row['Year']}")
+# # Layout (3 per row)
+# cols = st.columns(3)
 
-        with col3:
-                st.write(f"𝐒𝐘𝐍𝐎𝐏𝐒𝐈𝐒 :  {row['Synopsis']}")
+# for i, (_, anime) in enumerate(top.iterrows()):
+
+#     with cols[i % 3]:
+#         st.image(anime["image_url"], use_container_width=True)
+
+#         # Clickable poster button
+#         if st.button("Details", key=f"popbtn_{i}"):
+#             st.session_state.selected_anime = anime["Name"]
+
+#         st.markdown(
+#             f"<p style='text-align:center'>{anime['Name']}</p>",
+#             unsafe_allow_html=True
+#         )
+# # ---------------- GET CLICKED ANIME ----------------
+# if "selected_anime" in st.session_state:
+
+#     selected_name = st.session_state.selected_anime
+
+#     st.markdown("## 🎬 Anime Details")
+
+#     selected = search_anime(selected_name)
+
+#     if not selected.empty:
+#         row = selected.iloc[0]
+
+#         col1, col2, col3 = st.columns([1, 2, 3])
+
+#         with col1:
+#                 st.image(row["image_url"], use_container_width=True)
+
+#         with col2:
+#                 st.write(f"⭐ Rating: {row['Rating']}")
+#                 st.write(f"🎭 Genre: {row['Genre']}")
+#                 st.write(f"📺 Episodes: {row['Episodes']}")
+#                 st.write(f"🏢 Studio: {row['Studio']}")
+#                 st.write(f"📅 Year: {row['Year']}")
+
+#         with col3:
+#                 st.write(f"𝐒𝐘𝐍𝐎𝐏𝐒𝐈𝐒 :  {row['Synopsis']}")
 
 
 
